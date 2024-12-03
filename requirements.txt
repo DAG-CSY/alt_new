@@ -1,0 +1,9 @@
+pandas
+numpy
+plotly
+streamlit
+Pillow
+openpyxl
+configparser
+kaleido
+psutil
