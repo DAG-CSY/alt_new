@@ -18,7 +18,7 @@ def process_file(zf, file_name):
             
             # Get the file size in bytes
             file_size = zf.getinfo(file_name).file_size
-            cols = ['Mission Time', 'Status 1', 'UAV Altitude', 'Baro Altitude','Sec Baro Altitude']
+            cols = ['Mission Time', 'Status 1','Flight Mode', 'UAV Altitude', 'Baro Altitude','Sec Baro Altitude']
             chunks = pd.read_csv(file, chunksize=10000, usecols=cols)
             # Concatenate chunks into a DataFrame and store it in the dictionary
             df = pd.concat(chunks, ignore_index=True)
@@ -165,7 +165,7 @@ if uploaded_file is not None:
         st.write(f"Second filter data keys: {second_filtered_data.keys()}")
         # Step 2: Apply the second filter (filter2) to the split data
         final_data = read.run(second_filtered_data, second_file_sizes, func.filter2)
-        st.write(f"Final data keys: {second_filtered_data.keys()}")
+        st.write(f"Final data keys: {final_data.keys()}")
         if final_data is not None:
             # Cache the final data after processing
             cached_data = cache_final_data(final_data)
@@ -179,4 +179,3 @@ if uploaded_file is not None:
 
 else:
     st.write("No File Upload")
-
