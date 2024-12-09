@@ -44,7 +44,7 @@ def process_zip(load_file):
         file_names_to_process = [file_name for file_name in file_names if file_name.endswith('.txt') or file_name.endswith('.csv')]
 
         # Use ThreadPoolExecutor to process each file in parallel
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             # Map the process_file function to each file and retrieve results
             results = executor.map(lambda file_name: process_file(zf, file_name), file_names_to_process)
         
