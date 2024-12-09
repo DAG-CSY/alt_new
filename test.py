@@ -18,8 +18,9 @@ def process_file(zf, file_name):
             
             # Get the file size in bytes
             file_size = zf.getinfo(file_name).file_size
-            cols = ['Mission Time', 'Status 1', 'UAV Altitude', 'Baro Altitude','Sec Baro Altitude']
-            chunks = pd.read_csv(file, chunksize=10000, usecols=cols)
+            # cols = ['Mission Time', 'Status 1', 'Flight Mode','UAV Altitude', 'Baro Altitude','Sec Baro Altitude']
+            # chunks = pd.read_csv(file, chunksize=10000, usecols=cols)
+            chunks = pd.read_csv(file, chunksize=10000)
             # Concatenate chunks into a DataFrame and store it in the dictionary
             df = pd.concat(chunks, ignore_index=True)
             
