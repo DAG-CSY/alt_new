@@ -2,7 +2,7 @@ from library import *
 
 #  Function to read GitHub token from a secrets.txt file
 def get_github_token():
-    github_token = os.getenv("GITHUB_TOKEN")
+    github_token = st.secrets["GITHUB"]["token"]
     if github_token is not None:
         return github_token
     else:
