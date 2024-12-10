@@ -18,8 +18,7 @@ def process_file(zf, file_name):
             
             # Get the file size in bytes
             file_size = zf.getinfo(file_name).file_size
-            cols = ['Mission Time', 'Status 1','Flight Mode', 'UAV Altitude', 'Baro Altitude','Sec Baro Altitude','UAV ID','Temperature','Failure BIT 1','Failure BIT History 1','IMU Sensor Failure BIT','IMU Sensor Failure BIT History','Throttle Ctrl PWM', 'Failure BIT 2','Failure BIT History 2']
-            chunks = pd.read_csv(file, chunksize=10000, usecols=cols)
+            chunks = pd.read_csv(file, chunksize=10000)
             # Concatenate chunks into a DataFrame and store it in the dictionary
             df = pd.concat(chunks, ignore_index=True)
             
@@ -43,7 +42,7 @@ def process_zip(load_file):
         file_names_to_process = [file_name for file_name in file_names if file_name.endswith('.txt') or file_name.endswith('.csv')]
 
         # Use ThreadPoolExecutor to process each file in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
             # Map the process_file function to each file and retrieve results
             results = executor.map(lambda file_name: process_file(zf, file_name), file_names_to_process)
         
@@ -64,24 +63,26 @@ def run(file_dataframes, file_sizes):
 
     # Step 2: Split the telemetry data files after applying filter1
     zip_buffer = split.run(data_lib)  # Split the data after filter1
-    st.download_button(
-        label="Download All CSVs as ZIP",
-        data=zip_buffer,
-        file_name="split_csvs.zip",
-        mime="application/zip"
-    )
+    # st.download_button(
+    #     label="Download All CSVs as ZIP",
+    #     data=zip_buffer,
+    #     file_name="split_csvs.zip",
+    #     mime="application/zip"
+    # )
     
-    # return zip_buffer
+    return zip_buffer
 
 @st.cache_data
 def cache_final_data(final_data):
     """Caches the final processed data."""
     return final_data
 
+
 @st.cache_data
 def generate_report(data):
     excel_buffer = export.run(data)
     return excel_buffer
+
     
 # Steamlit Web version
 def display_filtered_data(cached_data):
@@ -154,35 +155,32 @@ uploaded_file = st.file_uploader("Upload a ZIP file containing text (CSV) files"
 
 # If a file is uploaded
 if uploaded_file is not None:
-    log_memory_usage("First Upload File")
+    log_memory_usage("First File Processing")
     # Step 2: Process the uploaded ZIP to extract data and file sizes
     file_dataframes, file_sizes = process_zip(uploaded_file)
     # Step 3: Run filtering (filter1) and split the data
-    run(file_dataframes, file_sizes)
+    second_uploaded_file = run(file_dataframes, file_sizes)
+    # Log memory usage periodically
+    log_memory_usage("Second Function Processing")
+    if second_uploaded_file is not None:
+        second_filtered_data, second_file_sizes = process_zip(second_uploaded_file)
+        second_filtered_data = {key[:15]: value for key, value in second_filtered_data.items()}
+        second_file_sizes = {key[:15]: value for key, value in second_file_sizes.items()}
+        # Log memory usage periodically
+        # st.write(f"Second filter data keys: {second_filtered_data.keys()}")
+        # Step 2: Apply the second filter (filter2) to the split data
+        final_data = read.run(second_filtered_data, second_file_sizes, func.filter2)
+        # st.write(f"Final data keys: {final_data.keys()}")
+        if final_data is not None:
+            # Cache the final data after processing
+            cached_data = cache_final_data(final_data)
+            # Log memory usage periodically
+            log_memory_usage("Final Data")
+            display_filtered_data(cached_data)
+        else:
+            st.write("No Final Data")
+    else:
+        st.write("No Split File")
 
 else:
     st.write("No File Upload")
-
-
-second_uploaded_file = st.file_uploader("Upload the Split ZIP file containing text (CSV) files", type="zip")
-if second_uploaded_file is not None:
-    # Log memory usage periodically
-    log_memory_usage("Second Upload File")
-    second_filtered_data, second_file_sizes = process_zip(second_uploaded_file)
-    second_filtered_data = {key[:15]: value for key, value in second_filtered_data.items()}
-    second_file_sizes = {key[:15]: value for key, value in second_file_sizes.items()}
-    # Log memory usage periodically
-    st.write(f"Second filter data keys: {second_filtered_data.keys()}")
-    # Step 2: Apply the second filter (filter2) to the split data
-    final_data = read.run(second_filtered_data, second_file_sizes, func.filter2)
-
-    if final_data is not None:
-        # Cache the final data after processing
-        cached_data = cache_final_data(final_data)
-        # Log memory usage periodically
-        log_memory_usage("Final Data")
-        display_filtered_data(cached_data)
-    else:
-        st.write("No Final Data")
-else:
-    st.write("No Split File")
