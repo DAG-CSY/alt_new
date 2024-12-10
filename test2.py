@@ -5,118 +5,183 @@ import split
 import export
 import plot
 
-# Function to process uploaded ZIP file
-def process_zip(uploaded_zip):
-    # Initialize dictionaries
-    file_data = {}
+#Webpage Customization
+st.set_page_config(layout="wide")
+
+# Function to process each file in parallel (helper function)
+def process_file(zf, file_name):
+    """Helper function to process individual file inside the ZIP."""
+    try:
+        with zf.open(file_name) as file:
+            # Read the content of the file as a DataFrame
+            # df = pd.read_csv(file)
+            
+            # Get the file size in bytes
+            file_size = zf.getinfo(file_name).file_size
+            chunks = pd.read_csv(file, chunksize=10000)
+            # Concatenate chunks into a DataFrame and store it in the dictionary
+            df = pd.concat(chunks, ignore_index=True)
+            
+            # Return the DataFrame and file size
+            return file_name, df, file_size
+    except Exception as e:
+        st.write(f"Error reading {file_name}: {e}")
+        return file_name, None, None
+
+# Refactored function to process ZIP files with parallelism
+def process_zip(load_file):
+    """Process the ZIP file and extract CSV/TXT data as DataFrames in parallel."""
+    file_dataframes = {}
     file_sizes = {}
 
-    # Read the ZIP file
-    with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
-        # Loop over each file in the ZIP archive
-        for file_name in zip_ref.namelist():
-            # Get file size
-            file_sizes[file_name] = zip_ref.getinfo(file_name).file_size
+    # Open the ZIP archive
+    with zipfile.ZipFile(io.BytesIO(load_file.read())) as zf:
+        file_names = zf.namelist()
 
-            # Read the file content based on its extension
-            with zip_ref.open(file_name) as file:
-                # For CSV files
-                if file_name.endswith('.csv'):
-                    df = pd.read_csv(file)
-                # For TXT files (assuming they are tabular and can be read as CSV)
-                elif file_name.endswith('.txt'):
-                    df = pd.read_csv(file, delimiter="\t")  # assuming tab-delimited
-                else:
-                    continue
+        # Filter files to only process .txt and .csv
+        file_names_to_process = [file_name for file_name in file_names if file_name.endswith('.txt') or file_name.endswith('.csv')]
 
-                # Add the dataframe to the dictionary
-                file_data[file_name] = df
-
-    return file_data, file_sizes
-
-# Function to save the data into HDF5 (in /mnt/data/)
-def save_to_hdf5(file_data, file_sizes):
-    # Path for saving the HDF5 file
-    hdf5_file_path = '/mnt/data/processed_files.h5'
-    
-    # Create the HDF5 file
-    try:
-        with h5py.File(hdf5_file_path, 'w') as hdf:
-            # Store DataFrames as datasets
-            for file_name, df in file_data.items():
-                hdf.create_dataset(file_name, data=df.values)
-            
-            # Store file sizes in a group
-            size_group = hdf.create_group('file_sizes')
-            for file_name, size in file_sizes.items():
-                size_group.create_dataset(file_name, data=size)
-    except Exception as e:
-        st.error(f"An error occurred while saving the file: {e}")
-        return None
-
-    return hdf5_file_path
-
-# Function to read the HDF5 file and convert the datasets into DataFrames
-def read_hdf5_to_dataframe(hdf5_file_path):
-    # Open the HDF5 file
-    with h5py.File(hdf5_file_path, 'r') as hdf:
-        # Create a dictionary to hold DataFrames
-        file_data = {}
+        # Use ThreadPoolExecutor to process each file in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            # Map the process_file function to each file and retrieve results
+            results = executor.map(lambda file_name: process_file(zf, file_name), file_names_to_process)
         
-        # Iterate through the datasets in the HDF5 file
-        for file_name in hdf.keys():
-            # Skip the 'file_sizes' group
-            if file_name == 'file_sizes':
-                continue
-            
-            # Read the dataset and convert it to a Pandas DataFrame
-            df = pd.DataFrame(hdf[file_name][:])
-            file_data[file_name] = df
-        
-        # Optionally, also read file sizes
-        file_sizes = {}
-        if 'file_sizes' in hdf:
-            size_group = hdf['file_sizes']
-            for file_name in size_group.keys():
-                file_sizes[file_name] = size_group[file_name][()]
-        
-        return file_data, file_sizes
+        # Process results after parallel execution
+        for file_name, df, file_size in results:
+            if df is not None:
+                file_dataframes[file_name] = df
+                file_sizes[file_name] = file_size
+                # st.write(f"Filename: {file_name}, Size: {file_size}")
 
-# Example filter function to process the DataFrames further
-def filter_dataframes(file_data):
-    filtered_data = {}
-    for file_name, df in file_data.items():
-        # Apply a filter to each DataFrame (example: remove rows where any column is NaN)
-        filtered_data[file_name] = df.dropna()
+    return file_dataframes, file_sizes
+
+
+# Function to process and split the data (with filter2 applied after splitting)
+def run(file_dataframes, file_sizes):
+    # Step 1: Apply the first filter to the raw data (filter1)
+    data_lib = read.run(file_dataframes, file_sizes, func.filter1)
+
+    # Step 2: Split the telemetry data files after applying filter1
+    zip_buffer = split.run(data_lib)  # Split the data after filter1
+    st.download_button(
+        label="Download All CSVs as ZIP",
+        data=zip_buffer,
+        file_name="split_csvs.zip",
+        mime="application/zip"
+    )
     
-    return filtered_data
+    # return zip_buffer
 
-# Streamlit UI for file upload
-st.title("Process ZIP File")
-uploaded_zip = st.file_uploader("Upload a ZIP file", type="zip")
+@st.cache_data
+def cache_final_data(final_data):
+    """Caches the final processed data."""
+    return final_data
 
-if uploaded_zip is not None:
-    # Process the ZIP file
-    file_data, file_sizes = process_zip(uploaded_zip)
-
-
-    # Save to HDF5 in the /mnt/data/ directory and provide download link
-    hdf5_file = save_to_hdf5(file_data, file_sizes)
+@st.cache_data
+def generate_report(data):
+    excel_buffer = export.run(data)
+    return excel_buffer
     
-    if hdf5_file:
-        st.download_button("Download HDF5 File", data=open(hdf5_file, "rb"), file_name="processed_files.h5")
+# Steamlit Web version
+def display_filtered_data(cached_data):
+    files = list(cached_data.keys())
+    telemetry_file = st.selectbox("Select files to view", files)
 
-    # Once the file is downloaded, you can read it back and apply filters
-    st.write("### Filter Processed Data")
+    tabs1, tabs2 = st.tabs(['Telemetry', 'Plot'])
 
-    # Read the HDF5 file back into DataFrames
-    file_data_from_hdf5, file_sizes_from_hdf5 = read_hdf5_to_dataframe(hdf5_file)
+    with tabs1:
+        #Print out the dataframe of the telemetry they want to view
+        st.dataframe(cached_data[telemetry_file])
 
-    # Display processed data (e.g., first 5 rows of each dataframe)
-    for file_name, df in file_data_from_hdf5.items():
-        st.write(f"### {file_name}")
-        st.write(df.head())
+    with tabs2:
+        #User will select the graph they want to plot
+        selection = st.selectbox("Select Plot", ['UAV vs Pri Baro', 'UAV vs Sec Baro', 'Pri Baro vs Sec Baro'])
 
-    # Display file sizes
-    st.write("### File Sizes")
-    st.write(file_sizes)
+        #After selection (plot the relevant graph selected)
+        plot.run(cached_data[telemetry_file],selection,toggle=1)
+
+        with st.spinner('Generating Report...'):
+            excel_buffer = generate_report(cached_data)
+            # Provide the download button for the report
+            st.download_button(
+                label="Download Report",
+                data=excel_buffer,
+                file_name="report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            st.success("Report Generated")
+
+        # # Button to generate altitude report
+        # generate = st.button('Generate Report')
+
+        # #Function to generate if the button is pressed
+        # if generate:
+        #     with st.spinner('Wait for it...'):
+        #         #Generate report
+        #         excel_buffer = export.run(cached_data)
+        #         # Provide the download button for the report
+        #         st.download_button(
+        #             label="Download Report (Excel)",
+        #             data=excel_buffer,
+        #             file_name="report.xlsx",
+        #             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        #         )
+        #         st.success("Report Generated")
+
+def log_memory_usage(title):
+    # Get the current memory usage (in MB)
+    memory_info = psutil.virtual_memory()
+    
+    # Display human-readable memory usage information
+    st.write(f"### {title} Memory Usage Information")
+    st.write(f"**Total Memory:** {memory_info.total / (1024 * 1024):,.2f} MB")
+    st.write(f"**Used Memory:** {memory_info.used / (1024 * 1024):,.2f} MB")
+    st.write(f"**Available Memory:** {memory_info.available / (1024 * 1024):,.2f} MB")
+    st.write(f"**Memory Usage (Percentage):** {memory_info.percent}%")
+    
+    # Provide context
+    if memory_info.percent > 80:
+        st.warning("⚠️ Memory usage is high! This could lead to slower performance or crashes.")
+    elif memory_info.percent > 50:
+        st.info("💡 Memory usage is moderate. Keep an eye on it.")
+    else:
+        st.success("✅ Memory usage is at a safe level.")
+
+
+# Step 1: Upload the ZIP file of unprocessed data
+uploaded_file = st.file_uploader("Upload a ZIP file containing text (CSV) files", type="zip")
+
+# If a file is uploaded
+if uploaded_file is not None:
+    log_memory_usage("First Upload File")
+    # Step 2: Process the uploaded ZIP to extract data and file sizes
+    file_dataframes, file_sizes = process_zip(uploaded_file)
+    # Step 3: Run filtering (filter1) and split the data
+    run(file_dataframes, file_sizes)
+
+else:
+    st.write("No File Upload")
+
+
+second_uploaded_file = st.file_uploader("Upload the Split ZIP file containing text (CSV) files", type="zip")
+if second_uploaded_file is not None:
+    # Log memory usage periodically
+    log_memory_usage("Second Upload File")
+    second_filtered_data, second_file_sizes = process_zip(second_uploaded_file)
+    second_filtered_data = {key[:15]: value for key, value in second_filtered_data.items()}
+    second_file_sizes = {key[:15]: value for key, value in second_file_sizes.items()}
+    # Log memory usage periodically
+    st.write(f"Second filter data keys: {second_filtered_data.keys()}")
+    # Step 2: Apply the second filter (filter2) to the split data
+    final_data = read.run(second_filtered_data, second_file_sizes, func.filter2)
+
+    if final_data is not None:
+        # Cache the final data after processing
+        cached_data = cache_final_data(final_data)
+        # Log memory usage periodically
+        log_memory_usage("Final Data")
+        display_filtered_data(cached_data)
+    else:
+        st.write("No Final Data")
+else:
+    st.write("No Split File")
