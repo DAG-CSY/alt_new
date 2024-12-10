@@ -7,4 +7,4 @@ openpyxl
 configparser
 kaleido
 psutil
-h5py
+PyGithub
