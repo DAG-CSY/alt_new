@@ -4,6 +4,7 @@ import read
 import split
 import export
 import plot
+import git
 
 #Webpage Customization
 st.set_page_config(layout="wide")
@@ -18,6 +19,9 @@ def process_file(zf, file_name):
             
             # Get the file size in bytes
             file_size = zf.getinfo(file_name).file_size
+            # cols = ['Mission Time', 'Status 1', 'UAV Altitude', 'Baro Altitude','Sec Baro Altitude']
+            # chunks = pd.read_csv(file, chunksize=10000, usecols=cols)
+
             chunks = pd.read_csv(file, chunksize=10000)
             # Concatenate chunks into a DataFrame and store it in the dictionary
             df = pd.concat(chunks, ignore_index=True)
@@ -60,15 +64,14 @@ def process_zip(load_file):
 def run(file_dataframes, file_sizes):
     # Step 1: Apply the first filter to the raw data (filter1)
     data_lib = read.run(file_dataframes, file_sizes, func.filter1)
-
     # Step 2: Split the telemetry data files after applying filter1
     zip_buffer = split.run(data_lib)  # Split the data after filter1
-    # st.download_button(
-    #     label="Download All CSVs as ZIP",
-    #     data=zip_buffer,
-    #     file_name="split_csvs.zip",
-    #     mime="application/zip"
-    # )
+    st.download_button(
+        label="Download All CSVs as ZIP",
+        data=zip_buffer,
+        file_name="split_csvs.zip",
+        mime="application/zip"
+    )
     
     return zip_buffer
 
@@ -79,8 +82,9 @@ def cache_final_data(final_data):
 
 
 @st.cache_data
-def generate_report(data):
-    excel_buffer = export.run(data)
+def cache_report(cached_data):
+    """Caches the final processed data."""
+    excel_buffer = export.run(cached_data)
     return excel_buffer
 
     
@@ -103,7 +107,7 @@ def display_filtered_data(cached_data):
         plot.run(cached_data[telemetry_file],selection,toggle=1)
 
         with st.spinner('Generating Report...'):
-            excel_buffer = generate_report(cached_data)
+            excel_buffer = cache_report(cached_data)
             # Provide the download button for the report
             st.download_button(
                 label="Download Report",
@@ -150,37 +154,99 @@ def log_memory_usage(title):
         st.success("✅ Memory usage is at a safe level.")
 
 
-# Step 1: Upload the ZIP file of unprocessed data
-uploaded_file = st.file_uploader("Upload a ZIP file containing text (CSV) files", type="zip")
+def step1():
+    uploaded_file = st.file_uploader("Upload a ZIP file containing text (CSV) files", type="zip")
 
-# If a file is uploaded
-if uploaded_file is not None:
-    log_memory_usage("First File Processing")
-    # Step 2: Process the uploaded ZIP to extract data and file sizes
-    file_dataframes, file_sizes = process_zip(uploaded_file)
-    # Step 3: Run filtering (filter1) and split the data
-    second_uploaded_file = run(file_dataframes, file_sizes)
-    # Log memory usage periodically
-    log_memory_usage("Second Function Processing")
-    if second_uploaded_file is not None:
-        second_filtered_data, second_file_sizes = process_zip(second_uploaded_file)
-        second_filtered_data = {key[:15]: value for key, value in second_filtered_data.items()}
-        second_file_sizes = {key[:15]: value for key, value in second_file_sizes.items()}
-        # Log memory usage periodically
-        # st.write(f"Second filter data keys: {second_filtered_data.keys()}")
-        # Step 2: Apply the second filter (filter2) to the split data
-        final_data = read.run(second_filtered_data, second_file_sizes, func.filter2)
-        # st.write(f"Final data keys: {final_data.keys()}")
-        if final_data is not None:
-            # Cache the final data after processing
-            cached_data = cache_final_data(final_data)
-            # Log memory usage periodically
-            log_memory_usage("Final Data")
-            display_filtered_data(cached_data)
+    # If a file is uploaded
+    if uploaded_file is not None:
+        log_memory_usage("First Upload File")
+        # Step 2: Process the uploaded ZIP to extract data and file sizes
+        file_dataframes, file_sizes = process_zip(uploaded_file)
+        # Step 3: Run filtering (filter1) and split the data
+        zip_buffer = run(file_dataframes, file_sizes)
+
+        token = git.get_github_token()
+
+        if token:
+            # Access your repository using the token
+            repo_name = 'DAG-CSY/data'  # Replace with your repo name
+            repo = git.get_github_repo(token, repo_name)
+            print(f"Repository Name: {repo.name}")
+
+            # Upload the zip buffer to GitHub
+            commit_message = "Add new archive (split_csvs.zip)"
+            target_path = 'split_csvs.zip'  # Path in the repository where you want to upload the file
+            git.upload_zip_buffer_to_github(repo, zip_buffer, commit_message, target_path)
         else:
-            st.write("No Final Data")
-    else:
-        st.write("No Split File")
+            print("GitHub token not found.")
 
-else:
-    st.write("No File Upload")
+    else:
+        st.write("No File Upload")
+    
+
+
+token = git.get_github_token()
+
+if token:
+    # Access your repository using the token
+    repo_name = 'DAG-CSY/data'  # Replace with your repo name
+    repo = git.get_github_repo(token, repo_name)
+    # print(f"Repository Name: {repo.name}")
+    zip_file = "split_csvs.zip"  # The name of the zip file you uploaded to GitHub
+    try:
+        # Try to get the file from the target path to check if it exists
+        existing_file = repo.get_contents(zip_file)
+        if existing_file is not None:
+            # print(f"File Path: {existing_file.path}")
+
+            # Extract the zip file content
+            zip_data = git.fetch_latest_file_from_github(repo_name, zip_file, token)
+
+            # Extract the zip file content
+            second_filtered_data, second_file_sizes = git.extract_zip_content_from_github(zip_data)
+            log_memory_usage("Loading File Contents")
+            if second_filtered_data is not None:
+                second_filtered_data = {key[:15]: value for key, value in second_filtered_data.items()}
+                second_file_sizes = {key[:15]: value for key, value in second_file_sizes.items()}
+                st.write(f"Filenames: {list(second_filtered_data.keys())}")
+                final_data = read.run(second_filtered_data, second_file_sizes, func.filter2)
+
+                if final_data is not None:
+                    # Cache the final data after processing
+                    cached_data = cache_final_data(final_data)
+                    # Log memory usage periodically
+                    display_filtered_data(cached_data)
+                else:
+                    st.write("No Final Data")
+            else:
+                print("Error Fetching Data from Github")
+        else:
+            step1()
+
+    except:
+        step1()
+        print("File does not exist/error reading file")
+        
+
+# second_uploaded_file = st.file_uploader("Upload the Split ZIP file containing text (CSV) files", type="zip")
+# if second_uploaded_file is not None:
+#     # Log memory usage periodically
+#     log_memory_usage("Second Upload File")
+#     second_filtered_data, second_file_sizes = process_zip(second_uploaded_file)
+#     second_filtered_data = {key[:15]: value for key, value in second_filtered_data.items()}
+#     second_file_sizes = {key[:15]: value for key, value in second_file_sizes.items()}
+#     # Log memory usage periodically
+#     # st.write(f"Second filter data keys: {second_filtered_data.keys()}")
+#     # Step 2: Apply the second filter (filter2) to the split data
+#     final_data = read.run(second_filtered_data, second_file_sizes, func.filter2)
+
+#     if final_data is not None:
+#         # Cache the final data after processing
+#         cached_data = cache_final_data(final_data)
+#         # Log memory usage periodically
+#         log_memory_usage("Final Data")
+#         display_filtered_data(cached_data)
+#     else:
+#         st.write("No Final Data")
+# else:
+#     st.write("No Split File")
