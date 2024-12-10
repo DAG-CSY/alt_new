@@ -18,9 +18,8 @@ def process_file(zf, file_name):
             
             # Get the file size in bytes
             file_size = zf.getinfo(file_name).file_size
-            # cols = ['Mission Time', 'Status 1', 'Flight Mode','UAV Altitude', 'Baro Altitude','Sec Baro Altitude']
-            # chunks = pd.read_csv(file, chunksize=10000, usecols=cols)
-            chunks = pd.read_csv(file, chunksize=10000)
+            cols = ['Mission Time', 'Status 1','Flight Mode', 'UAV Altitude', 'Baro Altitude','Sec Baro Altitude','UAV ID','Temperature','Failure BIT 1','Failure BIT History 1','IMU Sensor Failure BIT','IMU Sensor Failure BIT History','Throttle Ctrl PWM', 'Failure BIT 2','Failure BIT History 2']
+            chunks = pd.read_csv(file, chunksize=10000, usecols=cols)
             # Concatenate chunks into a DataFrame and store it in the dictionary
             df = pd.concat(chunks, ignore_index=True)
             
@@ -79,6 +78,10 @@ def cache_final_data(final_data):
     """Caches the final processed data."""
     return final_data
 
+@st.cache_data
+def generate_report(data):
+    excel_buffer = export.run(data)
+    return excel_buffer
     
 # Steamlit Web version
 def display_filtered_data(cached_data):
@@ -99,7 +102,7 @@ def display_filtered_data(cached_data):
         plot.run(cached_data[telemetry_file],selection,toggle=1)
 
         with st.spinner('Generating Report...'):
-            excel_buffer = export.run(cached_data)
+            excel_buffer = generate_report(cached_data)
             # Provide the download button for the report
             st.download_button(
                 label="Download Report",
